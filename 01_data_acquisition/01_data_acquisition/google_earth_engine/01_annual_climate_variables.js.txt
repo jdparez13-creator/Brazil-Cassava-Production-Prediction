@@ -1,0 +1,66 @@
+// 1. Cargar la geometría completa de los municipios (Polígonos)
+var municipios = ee.FeatureCollection("projects/ejemplo1-511423/assets/BR_Municipios_2025");
+
+// 2. Cargar colección mensual de ERA5-Land
+var era5_monthly = ee.ImageCollection("ECMWF/ERA5_LAND/MONTHLY_AGGR");
+
+// 3. Función para extraer variables por Polígono Completo
+function obtenerTabla1Poligonos(anoInicio, anoFim) {
+  var anos = ee.List.sequence(anoInicio, anoFim);
+  
+  var imagenesAnuales = ee.ImageCollection(anos.map(function(ano) {
+    var inicio = ee.Date.fromYMD(ano, 1, 1);
+    var fim = ee.Date.fromYMD(ano, 12, 31);
+    
+    var mClima = era5_monthly.filterDate(inicio, fim);
+    
+    // Temperatura del aire (Kelvin a Celsius)
+    var temp2m = mClima.select('temperature_2m').map(function(img) { return img.subtract(273.15); });
+    var tMean = temp2m.mean().rename('temp_mean');
+    var tMax = temp2m.max().rename('temp_max');
+    var tMin = temp2m.min().rename('temp_min');
+    var tAmp = tMax.subtract(tMin).rename('amplitud_termica');
+    
+    // Temperatura del suelo (0-7 cm) (Kelvin a Celsius)
+    var tSoil = mClima.select('soil_temperature_level_1').map(function(img) { return img.subtract(273.15); }).mean().rename('temp_soil_mean');
+    
+    // Precipitación total (Metros a mm)
+    var precip = mClima.select('total_precipitation_sum').map(function(img) { return img.multiply(1000); }).sum().rename('precip_total_mm');
+    
+    // Radiación solar (Joules a MJ/m2)
+    var radSolar = mClima.select('surface_net_solar_radiation_sum').map(function(img) { return img.divide(1000000); }).sum().rename('rad_solar_MJm2');
+    
+    return tMean.addBands(tMax)
+                .addBands(tMin)
+                .addBands(tAmp)
+                .addBands(tSoil)
+                .addBands(precip)
+                .addBands(radSolar)
+                .set('year', ano);
+  }));
+
+  // Aplicar reduceRegions con el PROMEDIO sobre la GEOMETRÍA COMPLETA del polígono
+  return imagenesAnuales.map(function(img) {
+    var ano = img.get('year');
+    var stats = img.reduceRegions({
+      collection: municipios, // Geometría de polígonos
+      reducer: ee.Reducer.mean(), // Promedio espacial de toda la superficie
+      scale: 11132 // Resolución nativa de ERA5-Land (~11 km)
+    });
+    return stats.map(function(f) { return f.set('ano', ano); });
+  }).flatten();
+}
+
+// 4. Bloques temporales para prevenir desbordamiento de memoria
+var t1_p1 = obtenerTabla1Poligonos(2004, 2009);
+var t1_p2 = obtenerTabla1Poligonos(2010, 2015);
+var t1_p3 = obtenerTabla1Poligonos(2016, 2020);
+var t1_p4 = obtenerTabla1Poligonos(2021, 2025);
+
+var colsT1 = ['CD_MUN', 'NM_MUN', 'SIGLA_UF', 'ano', 'temp_mean', 'temp_max', 'temp_min', 'amplitud_termica', 'temp_soil_mean', 'precip_total_mm', 'rad_solar_MJm2'];
+
+print("👇 Descarga Tabla 1 (Promedio por Polígono Completo):");
+print("Parte 1 (2004-2009):", t1_p1.getDownloadURL({format: 'CSV', selectors: colsT1, filename: 'Tabla1_Poligonos_2004_2009'}));
+print("Parte 2 (2010-2015):", t1_p2.getDownloadURL({format: 'CSV', selectors: colsT1, filename: 'Tabla1_Poligonos_2010_2015'}));
+print("Parte 3 (2016-2020):", t1_p3.getDownloadURL({format: 'CSV', selectors: colsT1, filename: 'Tabla1_Poligonos_2016_2020'}));
+print("Parte 4 (2021-2025):", t1_p4.getDownloadURL({format: 'CSV', selectors: colsT1, filename: 'Tabla1_Poligonos_2021_2025'}));

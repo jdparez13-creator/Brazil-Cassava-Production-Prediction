@@ -1,0 +1,90 @@
+// 1. Cargar la geometría de Polígonos Completa
+var municipios = ee.FeatureCollection("projects/ejemplo1-511423/assets/BR_Municipios_2025");
+
+// 2. Cargar colección diaria ERA5-Land
+var era5_daily = ee.ImageCollection("ECMWF/ERA5_LAND/DAILY_AGGR");
+
+// 3. Función para extraer índices diarios por Polígono Completo
+function obtenerTabla2Poligonos(anoInicio, anoFim) {
+  var anos = ee.List.sequence(anoInicio, anoFim);
+  
+  var imagenesAnuales = ee.ImageCollection(anos.map(function(ano) {
+    var inicio = ee.Date.fromYMD(ano, 1, 1);
+    var fim = ee.Date.fromYMD(ano, 12, 31);
+    
+    var dClima = era5_daily.filterDate(inicio, fim);
+    
+    // A. Conteo de Días Lluviosos y Secos
+    var precMM = dClima.select('total_precipitation_sum').map(function(img) {
+      return img.multiply(1000); // Metros a mm
+    });
+    
+    var diasLluviosos = precMM.map(function(img) { return img.gte(1.0); }).sum().rename('dias_lluviosos');
+    var diasSecos = precMM.map(function(img) { return img.lt(1.0); }).sum().rename('dias_secos');
+    
+    // B. Grados-Día Acumulados (GDD, Tbase = 10°C)
+    var gdd = dClima.map(function(img) {
+      var tmean = img.select('temperature_2m').subtract(273.15);
+      var gdd_dia = tmean.subtract(10.0);
+      return gdd_dia.where(gdd_dia.lt(0), 0);
+    }).sum().rename('GDD_acumulado');
+    
+    // C. Rachas Continuas (CDD / CWD)
+    var initList = ee.List([ee.Image.constant(0), ee.Image.constant(0)]);
+    var esSeco = precMM.map(function(img) { return img.lt(1.0); });
+    var esLluvia = precMM.map(function(img) { return img.gte(1.0); });
+
+    var cddIter = esSeco.toList(366).iterate(function(img, list) {
+      var l = ee.List(list);
+      var current = ee.Image(l.get(0));
+      var maxAcc = ee.Image(l.get(1));
+      var newCurrent = current.add(1).multiply(img);
+      var newMax = maxAcc.max(newCurrent);
+      return ee.List([newCurrent, newMax]);
+    }, initList);
+    var cdd = ee.Image(ee.List(cddIter).get(1)).rename('CDD_dias');
+    
+    var cwdIter = esLluvia.toList(366).iterate(function(img, list) {
+      var l = ee.List(list);
+      var current = ee.Image(l.get(0));
+      var maxAcc = ee.Image(l.get(1));
+      var newCurrent = current.add(1).multiply(img);
+      var newMax = maxAcc.max(newCurrent);
+      return ee.List([newCurrent, newMax]);
+    }, initList);
+    var cwd = ee.Image(ee.List(cwdIter).get(1)).rename('CWD_dias');
+
+    return diasLluviosos.addBands(diasSecos)
+                        .addBands(gdd)
+                        .addBands(cdd)
+                        .addBands(cwd)
+                        .set('year', ano);
+  }));
+
+  // Extracción con Reducer.mean() sobre Polígonos
+  return imagenesAnuales.map(function(img) {
+    var ano = img.get('year');
+    var stats = img.reduceRegions({
+      collection: municipios,
+      reducer: ee.Reducer.mean(),
+      scale: 11132
+    });
+    return stats.map(function(f) { return f.set('ano', ano); });
+  }).flatten();
+}
+
+// 4. Bloques temporales de descarga
+var t2_p1 = obtenerTabla2Poligonos(2004, 2008);
+var t2_p2 = obtenerTabla2Poligonos(2009, 2012);
+var t2_p3 = obtenerTabla2Poligonos(2013, 2016);
+var t2_p4 = obtenerTabla2Poligonos(2017, 2020);
+var t2_p5 = obtenerTabla2Poligonos(2021, 2025);
+
+var colsT2 = ['CD_MUN', 'NM_MUN', 'SIGLA_UF', 'ano', 'dias_lluviosos', 'dias_secos', 'CDD_dias', 'CWD_dias', 'GDD_acumulado'];
+
+print("👇 Descarga Tabla 2 (Indices Diarios por Polígono):");
+print("Parte 1 (2004-2008):", t2_p1.getDownloadURL({format: 'CSV', selectors: colsT2, filename: 'Tabla2_Poligonos_2004_2008'}));
+print("Parte 2 (2009-2012):", t2_p2.getDownloadURL({format: 'CSV', selectors: colsT2, filename: 'Tabla2_Poligonos_2009_2012'}));
+print("Parte 3 (2013-2016):", t2_p3.getDownloadURL({format: 'CSV', selectors: colsT2, filename: 'Tabla2_Poligonos_2013_2016'}));
+print("Parte 4 (2017-2020):", t2_p4.getDownloadURL({format: 'CSV', selectors: colsT2, filename: 'Tabla2_Poligonos_2017_2020'}));
+print("Parte 5 (2021-2025):", t2_p5.getDownloadURL({format: 'CSV', selectors: colsT2, filename: 'Tabla2_Poligonos_2021_2025'}));
