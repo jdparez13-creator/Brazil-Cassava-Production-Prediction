@@ -1,3 +1,4 @@
+//Copiar y pegar este codigo en el entorno de Google Eart Engine
 // 1. Cargar la geometría completa de los municipios (Polígonos)
 var municipios = ee.FeatureCollection("projects/ejemplo1-511423/assets/BR_Municipios_2025");
 
